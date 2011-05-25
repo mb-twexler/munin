@@ -10,7 +10,7 @@ Created by Ted Wexler on 2011-05-20.
 Copyright (c) 2011 Malwarebytes Corp. All rights reserved.
 """
 from __future__ import with_statement
-import os,sys,re,stat
+import os,sys,re,stat,time,pickle
 #for testing
 
 
@@ -52,17 +52,23 @@ class munin_mysql:
 			graph = argv[0].split("mysql_")[1]
 			if len(argv) > 1:
 				 if argv[1] == 'config': self.config(graph)
-			conn,cur = self.db_connect()
-			cur.execute("SHOW ENGINE INNODB STATUS;")
-			r = cur.fetchone()
-			innodbStatusText = r[2] # element 2 always has the data
-			cur.execute('SELECT VERSION();')
-			mysql_version = cur.fetchone()[0] # element 0 always has the data
-			self.update_variables(cur)
-			cur.close()
-			conn.close()
-			innodbParser = InnoDBStatusParser(innodbStatusText, mysql_version)
-			self.results.update(innodbParser.results)
+			muninCache = MuninMysqlCache()
+			cache = muninCache.retrieve()
+			if cache:
+				self.results = cache
+			else:
+				conn,cur = self.db_connect()
+				cur.execute("SHOW ENGINE INNODB STATUS;")
+				r = cur.fetchone()
+				innodbStatusText = r[2] # element 2 always has the data
+				cur.execute('SELECT VERSION();')
+				mysql_version = cur.fetchone()[0] # element 0 always has the data
+				self.update_variables(cur)
+				cur.close()
+				conn.close()
+				innodbParser = InnoDBStatusParser(innodbStatusText, mysql_version)
+				self.results.update(innodbParser.results)
+				muninCache.cache(self.results)
 			self.show(graph)
 	def db_connect(self):
 		try:
@@ -160,13 +166,11 @@ class InnoDBStatusParser:
 		transactions = self.data['TRANSACTIONS']
 		#we have to have some logic to sort out mysql version 5.1 and 5.5 because they don't use bigint anymore
 		if '5.5' in self.mysql_version:
-			ib_tnx = re.compile('Trx id counter ([0-9A-Z]+)\n').findall(transactions)[0]
-			self.results['ib_tnx'] = self.parse_bigint(ib_tnx)
+			self.results['ib_tnx'] = self.parse_bigint(re.compile('Trx id counter ([0-9A-F]+)\n').findall(transactions)[0])
 			self.results['ib_tnx_prg'] = re.compile('Purge done for trx\'s n:o < (\d+).*').findall(transactions)[0]
 		else:
-			ib_tnx = re.compile('Trx id counter 0 ([0-9A-Z]+)\n').findall(transactions)[0]					
-			self.results['ib_tnx'] = self.parse_bigint(ib_tnx)
-			self.results['ib_tnx_prg'] = re.compile('Purge done for trx\'s n:o < 0 (\d+).*').findall(transactions)[0]	
+			self.results['ib_tnx'] = self.parse_bigint(re.compile('Trx id counter[0 ]+([0-9A-F]+)\n').findall(transactions)[0])					
+			self.results['ib_tnx_prg'] = self.parse_bigint(re.compile('Purge done for trx\'s n:o <[0 ]+([0-9A-F]+).*').findall(transactions)[0])
 		self.results['ib_tnx_hist'] = re.compile('History list length (\d+)\n').findall(transactions)[0]
 		
 	def parse_file_io(self):
@@ -200,7 +204,7 @@ class InnoDBStatusParser:
 	def parse_log(self):
 		log = self.data['LOG']
 		res = re.compile('Log sequence.*(\d+)\nLog flushed.* (\d+)', re.DOTALL).findall(log)[0]
-		res2 = re.compile("(\d+) log i\/o.*done")
+		res2 = re.compile("(\d+) log i\/o.*done").findall(log)[0]
 		self.results['ib_log_written'],self.results['ib_log_flush'] = res
 		self.results['ib_io_log'] = res2[0]
 	def parse_bigint(self, i):
@@ -217,8 +221,21 @@ class MuninMysqlGraphs:
 class MuninMysqlCache:
 	file = "/tmp/munin-mysql.tmp"
 	def __init__(self):
-		st = os.stat(self.file).st_mode
-		if stat.S_ISREG(st):
+		pass
+	def retrieve(self):
+		try:
+			st = os.stat(self.file)
+			curtime = time.time()
+			if curtime - st[stat.ST_MTIME] > 300:
+				os.unlink(self.file)
+				return None
+			else:
+				with open(self.file) as f: return pickle.load(f)
+		except:
+			return None
+	def cache(self, object):
+		with open(self.file, 'w') as f:
+			pickle.dump(object,f)
 			
 if __name__ == '__main__':
 	m = munin_mysql()

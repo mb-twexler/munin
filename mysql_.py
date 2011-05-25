@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
+# Based on mysql_ by Kjell-Magne Oierud
 # Munin magic markers 
 #%# family=auto
 #%# capabilities=autoconf suggest

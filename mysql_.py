@@ -168,7 +168,7 @@ class InnoDBStatusParser:
 		#we have to have some logic to sort out mysql version 5.1 and 5.5 because they don't use bigint anymore
 		if '5.5' in self.mysql_version:
 			self.results['ib_tnx'] = self.parse_bigint(re.compile('Trx id counter ([0-9A-F]+)\n').findall(transactions)[0])
-			self.results['ib_tnx_prg'] = re.compile('Purge done for trx\'s n:o < (\d+).*').findall(transactions)[0]
+			self.results['ib_tnx_prg'] = self.parse_bigint(re.compile('Purge done for trx\'s n:o <[0 ]+[0-9A-F]+).*').findall(transactions)[0])
 		else:
 			self.results['ib_tnx'] = self.parse_bigint(re.compile('Trx id counter[0 ]+([0-9A-F]+)\n').findall(transactions)[0])					
 			self.results['ib_tnx_prg'] = self.parse_bigint(re.compile('Purge done for trx\'s n:o <[0 ]+([0-9A-F]+).*').findall(transactions)[0])
@@ -227,7 +227,7 @@ class MuninMysqlCache:
 		try:
 			st = os.stat(self.file)
 			curtime = time.time()
-			if curtime - st[stat.ST_MTIME] > 300:
+			if curtime - st[stat.ST_MTIME] > 90:
 				os.unlink(self.file)
 				return None
 			else:
